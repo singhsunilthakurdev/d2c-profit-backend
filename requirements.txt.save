@@ -1,0 +1,6 @@
+
+fastapi
+uvicorn
+stripe
+psycopg2-binary
+bcrypt

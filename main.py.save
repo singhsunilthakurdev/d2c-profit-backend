@@ -1,4 +1,12 @@
-from fastapi import FastAPI, Request
+login: Fri Feb 27 17:07:52 on ttys000
+sunil@Sunilss-MacBook-Pro ~ % cd ~/influencer-analyzer/backend
+sunil@Sunilss-MacBook-Pro backend % is
+zsh: command not found: is
+sunil@Sunilss-MacBook-Pro backend % cd backend
+cd: no such file or directory: backend
+sunil@Sunilss-MacBook-Pro backend % 
+
+% cd ~/influencer-analyzer/backen^^^^^^^^^^^^^^^from fastapi import FastAPI, Request
 from pydantic import BaseModel
 import stripe
 import psycopg2
