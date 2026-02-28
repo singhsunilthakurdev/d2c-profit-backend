@@ -3,7 +3,7 @@ from pydantic import BaseModel
 import stripe
 import psycopg2
 import os
-import hashlib
+import bcrypt
 
 app = FastAPI()
 
@@ -11,81 +11,99 @@ stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+DOMAIN = "http://localhost:8501"  # change to your domain later
+
 
 def get_connection():
     return psycopg2.connect(DATABASE_URL)
 
 
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
-
-
-# -----------------------
-# REGISTER
-# -----------------------
-class RegisterModel(BaseModel):
+# -------------------------
+# MODELS
+# -------------------------
+class AuthData(BaseModel):
     email: str
     password: str
 
 
+# -------------------------
+# REGISTER
+# -------------------------
 @app.post("/register")
-def register_user(data: RegisterModel):
+def register(data: AuthData):
+    hashed = bcrypt.hashpw(data.password.encode(), bcrypt.gensalt())
+
     conn = get_connection()
     cur = conn.cursor()
-
-    hashed = hash_password(data.password)
 
     try:
         cur.execute("""
             INSERT INTO users (email, password)
             VALUES (%s, %s)
-        """, (data.email, hashed))
+        """, (data.email, hashed.decode()))
+
         conn.commit()
+        return {"registered": True}
     except:
         return {"error": "User already exists"}
-
-    cur.close()
-    conn.close()
-
-    return {"status": "registered"}
+    finally:
+        cur.close()
+        conn.close()
 
 
-# -----------------------
+# -------------------------
 # LOGIN
-# -----------------------
-class LoginModel(BaseModel):
-    email: str
-    password: str
-
-
+# -------------------------
 @app.post("/login")
-def login_user(data: LoginModel):
+def login(data: AuthData):
+
     conn = get_connection()
     cur = conn.cursor()
 
-    hashed = hash_password(data.password)
-
-    cur.execute("""
-        SELECT subscription_status FROM users
-        WHERE email=%s AND password=%s
-    """, (data.email, hashed))
-
+    cur.execute("SELECT password, subscription_status FROM users WHERE email=%s", (data.email,))
     result = cur.fetchone()
 
     cur.close()
     conn.close()
 
-    if result:
-        return {"login": True, "subscription": result[0]}
+    if not result:
+        return {"login": False}
+
+    stored_password, subscription = result
+
+    if bcrypt.checkpw(data.password.encode(), stored_password.encode()):
+        return {"login": True, "subscription": subscription}
 
     return {"login": False}
 
 
-# -----------------------
+# -------------------------
+# CREATE CHECKOUT SESSION
+# -------------------------
+@app.post("/create-checkout-session")
+def create_checkout_session(data: AuthData):
+
+    session = stripe.checkout.Session.create(
+        payment_method_types=["card"],
+        mode="subscription",
+        line_items=[{
+            "price": "YOUR_PRICE_ID",  # replace from Stripe
+            "quantity": 1
+        }],
+        customer_email=data.email,
+        success_url=f"{DOMAIN}?success=true",
+        cancel_url=f"{DOMAIN}?canceled=true",
+    )
+
+    return {"checkout_url": session.url}
+
+
+# -------------------------
 # STRIPE WEBHOOK
-# -----------------------
+# -------------------------
 @app.post("/webhook")
 async def stripe_webhook(request: Request):
+
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
 
@@ -93,12 +111,13 @@ async def stripe_webhook(request: Request):
         event = stripe.Webhook.construct_event(
             payload, sig_header, WEBHOOK_SECRET
         )
-    except Exception as e:
-        return {"error": str(e)}
+    except Exception:
+        return {"error": "Invalid webhook"}
 
     if event["type"] == "checkout.session.completed":
+
         session = event["data"]["object"]
-        email = session["customer_details"]["email"]
+        email = session["customer_email"]
 
         conn = get_connection()
         cur = conn.cursor()
@@ -113,4 +132,4 @@ async def stripe_webhook(request: Request):
         cur.close()
         conn.close()
 
-    return {"status": "success"}
+    return {"status": "ok"}
